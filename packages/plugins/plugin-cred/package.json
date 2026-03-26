@@ -1,0 +1,34 @@
+{
+  "name": "@cred-ninja/paperclip-plugin-cred",
+  "version": "0.2.1",
+  "type": "module",
+  "description": "Paperclip plugin that bridges agent runs to either a self-hosted Cred server or embedded local Cred primitives.",
+  "private": true,
+  "license": "MIT",
+  "paperclipPlugin": {
+    "manifest": "./manifest.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cred-ninja/paperclip.git",
+    "directory": "packages/plugins/plugin-cred"
+  },
+  "homepage": "https://github.com/cred-ninja/paperclip",
+  "bugs": {
+    "url": "https://github.com/cred-ninja/paperclip/issues"
+  },
+  "scripts": {
+    "build": "pnpm run check",
+    "check": "node --check manifest.js && node --check worker.js && node --check embedded-callback-server.mjs",
+    "typecheck": "pnpm run check"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@credninja/oauth": "^1.0.0",
+    "@credninja/sdk": "^1.0.0",
+    "@credninja/vault": "^1.0.0",
+    "@paperclipai/plugin-sdk": "workspace:*"
+  }
+}
