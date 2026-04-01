@@ -1,0 +1,1 @@
+{"type":"result","subtype":"error","session_id":"","model":"","is_error":true,"result":"Model nonexistent-model does not exist","errors":[{"message":"Model nonexistent-model does not exist","code":"model_not_found"}],"total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0}}

@@ -1,0 +1,1 @@
+{"type":"result","subtype":"error","session_id":"sess-rl-001","model":"claude-sonnet-4-6","is_error":true,"result":"429 Too Many Requests - Rate limit exceeded","errors":["Rate limit exceeded, please retry after 30 seconds"],"total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0}}

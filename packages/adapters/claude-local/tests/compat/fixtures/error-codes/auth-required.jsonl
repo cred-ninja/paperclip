@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"","model":"","tools":[],"mcp_servers":[]}
+{"type":"result","subtype":"error","session_id":"","model":"","is_error":true,"result":"Please run `claude login` to authenticate","errors":["Authentication required"],"total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0}}

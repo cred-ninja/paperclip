@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-tool-456","model":"claude-sonnet-4-6","tools":[{"name":"Read","type":"computer"}],"mcp_servers":[]}
+{"type":"assistant","session_id":"sess-tool-456","message":{"role":"assistant","content":[{"type":"text","text":"Let me read that file for you."},{"type":"tool_use","id":"toolu_01abc","name":"Read","input":{"file_path":"/tmp/test.txt"}}]},"parent_tool_use_id":null}
+{"type":"tool_result","session_id":"sess-tool-456","tool_use_id":"toolu_01abc","content":[{"type":"text","text":"file contents here"}],"is_error":false}
+{"type":"assistant","session_id":"sess-tool-456","message":{"role":"assistant","content":[{"type":"text","text":"The file contains: file contents here"}]},"parent_tool_use_id":null}
+{"type":"result","subtype":"success","session_id":"sess-tool-456","model":"claude-sonnet-4-6","is_error":false,"result":"The file contains: file contents here","total_cost_usd":0.012,"usage":{"input_tokens":500,"output_tokens":80,"cache_read_input_tokens":100},"stop_reason":"end_turn"}

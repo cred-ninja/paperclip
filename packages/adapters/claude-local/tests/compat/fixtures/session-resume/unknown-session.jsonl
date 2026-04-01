@@ -1,0 +1,1 @@
+{"type":"result","subtype":"error","session_id":"","model":"claude-sonnet-4-6","is_error":true,"result":"no conversation found with session id sess-expired-999","errors":["no conversation found with session id sess-expired-999"],"total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0}}

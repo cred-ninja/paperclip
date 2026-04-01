@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"sess-multi-789","model":"claude-opus-4-6","tools":[],"mcp_servers":[]}
+{"type":"assistant","session_id":"sess-multi-789","message":{"role":"assistant","content":[{"type":"text","text":"First part of the response."},{"type":"text","text":"Second part of the response."}]},"parent_tool_use_id":null}
+{"type":"result","subtype":"success","session_id":"sess-multi-789","model":"claude-opus-4-6","is_error":false,"result":"First part of the response.\n\nSecond part of the response.","total_cost_usd":0.008,"usage":{"input_tokens":200,"output_tokens":40,"cache_read_input_tokens":50},"stop_reason":"end_turn"}
