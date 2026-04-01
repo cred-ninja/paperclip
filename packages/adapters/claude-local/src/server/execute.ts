@@ -575,6 +575,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       resultJson: parsed,
       summary: parsedStream.summary || asString(parsed.result, ""),
       clearSession: clearSessionForMaxTurns || Boolean(opts.clearSessionOnMissingSession && !resolvedSessionId),
+      toolTrace: parsedStream.toolTrace.length > 0 ? parsedStream.toolTrace : undefined,
     };
   };
 

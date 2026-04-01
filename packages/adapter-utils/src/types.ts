@@ -61,6 +61,10 @@ export interface AdapterRuntimeServiceReport {
   healthStatus?: "unknown" | "healthy" | "unhealthy";
 }
 
+export type ToolTraceEntry =
+  | { kind: "tool_call"; name: string; toolUseId: string; input: unknown }
+  | { kind: "tool_result"; toolUseId: string; content: string; isError: boolean };
+
 export interface AdapterExecutionResult {
   exitCode: number | null;
   signal: string | null;
@@ -84,6 +88,7 @@ export interface AdapterExecutionResult {
   runtimeServices?: AdapterRuntimeServiceReport[];
   summary?: string | null;
   clearSession?: boolean;
+  toolTrace?: ToolTraceEntry[];
   question?: {
     prompt: string;
     choices: Array<{

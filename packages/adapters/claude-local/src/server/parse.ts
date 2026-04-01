@@ -1,4 +1,4 @@
-import type { UsageSummary } from "@paperclipai/adapter-utils";
+import type { UsageSummary, ToolTraceEntry } from "@paperclipai/adapter-utils";
 import { asString, asNumber, parseObject, parseJson } from "@paperclipai/adapter-utils/server-utils";
 
 const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+`?claude\s+login`?|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
@@ -9,6 +9,7 @@ export function parseClaudeStreamJson(stdout: string) {
   let model = "";
   let finalResult: Record<string, unknown> | null = null;
   const assistantTexts: string[] = [];
+  const toolTrace: ToolTraceEntry[] = [];
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -30,9 +31,47 @@ export function parseClaudeStreamJson(stdout: string) {
       for (const entry of content) {
         if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
         const block = entry as Record<string, unknown>;
-        if (asString(block.type, "") === "text") {
+        const blockType = asString(block.type, "");
+        if (blockType === "text") {
           const text = asString(block.text, "");
           if (text) assistantTexts.push(text);
+        } else if (blockType === "tool_use") {
+          const toolUseId = asString(block.id, "") || asString(block.tool_use_id, "");
+          const name = asString(block.name, "unknown");
+          if (toolUseId) {
+            toolTrace.push({ kind: "tool_call", name, toolUseId, input: block.input ?? {} });
+          }
+        }
+      }
+      continue;
+    }
+
+    if (type === "user") {
+      const message = parseObject(event.message);
+      const content = Array.isArray(message.content) ? message.content : [];
+      for (const entry of content) {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+        const block = entry as Record<string, unknown>;
+        if (asString(block.type, "") === "tool_result") {
+          const toolUseId = asString(block.tool_use_id, "");
+          const isError = block.is_error === true;
+          let text = "";
+          if (typeof block.content === "string") {
+            text = block.content;
+          } else if (Array.isArray(block.content)) {
+            const parts: string[] = [];
+            for (const part of block.content) {
+              if (typeof part === "object" && part !== null && !Array.isArray(part)) {
+                const p = part as Record<string, unknown>;
+                const t = asString(p.text, "");
+                if (t) parts.push(t);
+              }
+            }
+            text = parts.join("\n");
+          }
+          if (toolUseId) {
+            toolTrace.push({ kind: "tool_result", toolUseId, content: text, isError });
+          }
         }
       }
       continue;
@@ -52,6 +91,7 @@ export function parseClaudeStreamJson(stdout: string) {
       usage: null as UsageSummary | null,
       summary: assistantTexts.join("\n\n").trim(),
       resultJson: null as Record<string, unknown> | null,
+      toolTrace,
     };
   }
 
@@ -72,6 +112,7 @@ export function parseClaudeStreamJson(stdout: string) {
     usage,
     summary,
     resultJson: finalResult,
+    toolTrace,
   };
 }
 

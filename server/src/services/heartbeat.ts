@@ -2753,6 +2753,36 @@ export function heartbeatService(db: Db) {
             } as Record<string, unknown>)
           : null;
 
+      if (adapterResult.toolTrace && adapterResult.toolTrace.length > 0) {
+        for (const entry of adapterResult.toolTrace) {
+          if (entry.kind === "tool_call") {
+            await appendRunEvent(currentRun, seq++, {
+              eventType: "tool.call",
+              stream: "system",
+              level: "info",
+              message: entry.name,
+              payload: {
+                toolUseId: entry.toolUseId,
+                name: entry.name,
+                input: entry.input,
+              },
+            });
+          } else if (entry.kind === "tool_result") {
+            await appendRunEvent(currentRun, seq++, {
+              eventType: "tool.result",
+              stream: "system",
+              level: entry.isError ? "error" : "info",
+              message: entry.isError ? `tool error: ${entry.toolUseId}` : entry.toolUseId,
+              payload: {
+                toolUseId: entry.toolUseId,
+                content: entry.content,
+                isError: entry.isError,
+              },
+            });
+          }
+        }
+      }
+
       await setRunStatus(run.id, status, {
         finishedAt: new Date(),
         error:

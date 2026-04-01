@@ -5,6 +5,7 @@ export type {
   AdapterBillingType,
   AdapterRuntimeServiceReport,
   AdapterExecutionResult,
+  ToolTraceEntry,
   AdapterInvocationMeta,
   AdapterExecutionContext,
   AdapterEnvironmentCheckLevel,
