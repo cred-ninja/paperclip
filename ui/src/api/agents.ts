@@ -60,6 +60,19 @@ export interface AgentPermissionUpdate {
   canAssignTasks: boolean;
 }
 
+export interface SessionHealth {
+  sessionId: string | null;
+  sessionAgeHours: number;
+  sessionRunCount: number;
+  rawInputTokens?: number;
+  maxSessionAgeHours: number;
+  maxSessionRuns: number;
+  maxRawInputTokens: number;
+  healthy: boolean;
+  warningReason: string | null;
+  policySource: string;
+}
+
 function withCompanyScope(path: string, companyId?: string) {
   if (!companyId) return path;
   const separator = path.includes("?") ? "&" : "?";
@@ -157,6 +170,8 @@ export const agentsApi = {
     api.delete<{ ok: true }>(agentPath(agentId, companyId, `/keys/${encodeURIComponent(keyId)}`)),
   runtimeState: (id: string, companyId?: string) =>
     api.get<AgentRuntimeState>(agentPath(id, companyId, "/runtime-state")),
+  sessionHealth: (id: string, companyId?: string) =>
+    api.get<SessionHealth>(agentPath(id, companyId, "/session-health")),
   taskSessions: (id: string, companyId?: string) =>
     api.get<AgentTaskSession[]>(agentPath(id, companyId, "/task-sessions")),
   resetSession: (id: string, taskKey?: string | null, companyId?: string) =>

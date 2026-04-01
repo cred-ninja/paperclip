@@ -2,10 +2,15 @@ import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
+  DEFAULT_CODEX_LOCAL_MODEL,
+} from "@paperclipai/adapter-codex-local";
+import {
   agentsApi,
   type AgentKey,
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
+  type SessionHealth,
 } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
 import { budgetsApi } from "../api/budgets";
@@ -68,6 +73,7 @@ import {
   ChevronRight,
   ChevronDown,
   ArrowLeft,
+  ArrowRightLeft,
   HelpCircle,
   FolderOpen,
 } from "lucide-react";
@@ -223,6 +229,16 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
 }
 
 type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+const QUICK_SWITCHABLE_ADAPTER_TYPES = new Set(["claude_local", "codex_local"]);
+const ADAPTER_SWITCH_CONFIG_PRESERVE_KEYS = [
+  "env",
+  "promptTemplate",
+  "instructionsFilePath",
+  "cwd",
+  "timeoutSec",
+  "graceSec",
+  "bootstrapPromptTemplate",
+] as const;
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
@@ -231,6 +247,38 @@ function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "budget") return "budget";
   if (value === "runs") return value;
   return "dashboard";
+}
+
+function buildQuickAdapterSwitchPatch(
+  agent: AgentDetailRecord,
+  targetAdapterType: "claude_local" | "codex_local",
+) {
+  const existingConfig =
+    agent.adapterConfig && typeof agent.adapterConfig === "object" && !Array.isArray(agent.adapterConfig)
+      ? agent.adapterConfig as Record<string, unknown>
+      : {};
+  const preserved: Record<string, unknown> = {};
+  for (const key of ADAPTER_SWITCH_CONFIG_PRESERVE_KEYS) {
+    if (key in existingConfig) preserved[key] = existingConfig[key];
+  }
+
+  return {
+    adapterType: targetAdapterType,
+    adapterConfig: {
+      ...preserved,
+      model: targetAdapterType === "codex_local" ? DEFAULT_CODEX_LOCAL_MODEL : "",
+      effort: "",
+      modelReasoningEffort: "",
+      variant: "",
+      mode: "",
+      ...(targetAdapterType === "codex_local"
+        ? {
+            dangerouslyBypassApprovalsAndSandbox:
+              DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
+          }
+        : {}),
+    },
+  };
 }
 
 function usageNumber(usage: Record<string, unknown> | null, ...keys: string[]) {
@@ -526,6 +574,7 @@ export function AgentDetail() {
   const { closePanel } = usePanel();
   const { openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -564,6 +613,14 @@ export function AgentDetail() {
     queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
     queryFn: () => agentsApi.runtimeState(resolvedAgentId!, resolvedCompanyId ?? undefined),
     enabled: Boolean(resolvedAgentId) && needsDashboardData,
+  });
+
+  const { data: sessionHealth } = useQuery({
+    queryKey: queryKeys.agents.sessionHealth(resolvedAgentId ?? routeAgentRef),
+    queryFn: () => agentsApi.sessionHealth(resolvedAgentId!, resolvedCompanyId ?? undefined),
+    enabled: Boolean(resolvedAgentId) && needsDashboardData,
+    refetchInterval: 60_000,
+    staleTime: 15_000,
   });
 
   const { data: heartbeats } = useQuery({
@@ -694,6 +751,48 @@ export function AgentDetail() {
     },
   });
 
+  const quickSwitchTarget =
+    agent?.adapterType === "claude_local"
+      ? "codex_local"
+      : agent?.adapterType === "codex_local"
+        ? "claude_local"
+        : null;
+  const quickSwitchAdapter = useMutation({
+    mutationFn: async (targetAdapterType: "claude_local" | "codex_local") => {
+      if (!agentLookupRef || !agent) {
+        throw new Error("No agent available to switch");
+      }
+      await agentsApi.update(
+        agentLookupRef,
+        buildQuickAdapterSwitchPatch(agent, targetAdapterType),
+        resolvedCompanyId ?? undefined,
+      );
+      await agentsApi.resetSession(agentLookupRef, null, resolvedCompanyId ?? undefined);
+    },
+    onSuccess: (_data, targetAdapterType) => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.runtimeState(agentLookupRef) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.taskSessions(agentLookupRef) });
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
+        if (agent?.id) {
+          queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(resolvedCompanyId, agent.id) });
+        }
+      }
+      pushToast({
+        title: `Switched to ${adapterLabels[targetAdapterType] ?? targetAdapterType}`,
+        body: "Saved sessions were cleared so the next run starts cleanly on the new adapter.",
+      });
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to switch adapter";
+      setActionError(message);
+      pushToast({ title: "Adapter switch failed", body: message, tone: "error" });
+    },
+  });
+
   const budgetMutation = useMutation({
     mutationFn: (amount: number) =>
       budgetsApi.upsertPolicy(resolvedCompanyId!, {
@@ -802,6 +901,14 @@ export function AgentDetail() {
   }
   const isPendingApproval = agent.status === "pending_approval";
   const showConfigActionBar = (activeView === "configuration" || activeView === "instructions") && (configDirty || configSaving);
+  const hasLiveRun = mobileLiveRun !== null;
+  const canQuickSwitchAdapter =
+    quickSwitchTarget !== null &&
+    QUICK_SWITCHABLE_ADAPTER_TYPES.has(agent.adapterType) &&
+    !isPendingApproval &&
+    !hasLiveRun &&
+    !configDirty &&
+    !configSaving;
 
   return (
     <div className={cn("space-y-6", isMobile && showConfigActionBar && "pb-24")}>
@@ -833,16 +940,38 @@ export function AgentDetail() {
             <Plus className="h-3.5 w-3.5 sm:mr-1" />
             <span className="hidden sm:inline">Assign Task</span>
           </Button>
+          {quickSwitchTarget && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => quickSwitchAdapter.mutate(quickSwitchTarget)}
+              disabled={!canQuickSwitchAdapter || quickSwitchAdapter.isPending}
+              title={
+                hasLiveRun
+                  ? "Wait for the active run to finish before switching adapters."
+                  : configDirty || configSaving
+                    ? "Save or cancel configuration changes before switching adapters."
+                    : undefined
+              }
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">
+                {quickSwitchAdapter.isPending
+                  ? "Switching..."
+                  : `Use ${quickSwitchTarget === "codex_local" ? "Codex" : "Claude"}`}
+              </span>
+            </Button>
+          )}
           <RunButton
             onClick={() => agentAction.mutate("invoke")}
-            disabled={agentAction.isPending || isPendingApproval}
+            disabled={agentAction.isPending || quickSwitchAdapter.isPending || isPendingApproval}
             label="Run Heartbeat"
           />
           <PauseResumeButton
             isPaused={agent.status === "paused"}
             onPause={() => agentAction.mutate("pause")}
             onResume={() => agentAction.mutate("resume")}
-            disabled={agentAction.isPending || isPendingApproval}
+            disabled={agentAction.isPending || quickSwitchAdapter.isPending || isPendingApproval}
           />
           <span className="hidden sm:inline"><StatusBadge status={agent.status} /></span>
           {mobileLiveRun && (
@@ -991,6 +1120,7 @@ export function AgentDetail() {
           runs={heartbeats ?? []}
           assignedIssues={assignedIssues}
           runtimeState={runtimeState}
+          sessionHealth={sessionHealth}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
         />
@@ -1157,6 +1287,7 @@ function AgentOverview({
   runs,
   assignedIssues,
   runtimeState,
+  sessionHealth,
   agentId,
   agentRouteId,
 }: {
@@ -1164,6 +1295,7 @@ function AgentOverview({
   runs: HeartbeatRun[];
   assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   runtimeState?: AgentRuntimeState;
+  sessionHealth?: SessionHealth;
   agentId: string;
   agentRouteId: string;
 }) {
@@ -1171,6 +1303,9 @@ function AgentOverview({
     <div className="space-y-8">
       {/* Latest Run */}
       <LatestRunCard runs={runs} agentId={agentRouteId} />
+
+      {/* Session Health */}
+      {sessionHealth && <SessionHealthCard health={sessionHealth} />}
 
       {/* Charts */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1225,6 +1360,86 @@ function AgentOverview({
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Costs</h3>
         <CostsSection runtimeState={runtimeState} runs={runs} />
+      </div>
+    </div>
+  );
+}
+
+/* ---- Session Health Card ---- */
+
+function SessionHealthCard({ health }: { health: SessionHealth }) {
+  if (!health.sessionId) return null;
+
+  const agePercent = health.maxSessionAgeHours > 0
+    ? Math.min(100, Math.round((health.sessionAgeHours / health.maxSessionAgeHours) * 100))
+    : 0;
+  const runPercent = health.maxSessionRuns > 0
+    ? Math.min(100, Math.round((health.sessionRunCount / health.maxSessionRuns) * 100))
+    : 0;
+  const tokenPercent = health.maxRawInputTokens > 0 && health.rawInputTokens != null
+    ? Math.min(100, Math.round((health.rawInputTokens / health.maxRawInputTokens) * 100))
+    : 0;
+
+  const barColor = (pct: number) =>
+    pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-emerald-500";
+
+  const statusColor = !health.healthy ? "text-red-500" : health.warningReason ? "text-yellow-500" : "text-emerald-500";
+  const statusIcon = !health.healthy ? (
+    <XCircle className={cn("h-4 w-4", statusColor)} />
+  ) : health.warningReason ? (
+    <Clock className={cn("h-4 w-4", statusColor)} />
+  ) : (
+    <CheckCircle2 className={cn("h-4 w-4", statusColor)} />
+  );
+  const statusLabel = !health.healthy ? "Needs rotation" : health.warningReason ? "Warning" : "Healthy";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium">Session Health</h3>
+        <div className="flex items-center gap-1.5 text-xs">
+          {statusIcon}
+          <span className={statusColor}>{statusLabel}</span>
+          <span className="text-muted-foreground">({health.policySource.replace("_", " ")})</span>
+        </div>
+      </div>
+      <div className="border border-border rounded-lg p-4 space-y-3">
+        {health.maxSessionAgeHours > 0 && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Age</span>
+              <span className="tabular-nums">{health.sessionAgeHours.toFixed(1)}h / {health.maxSessionAgeHours}h</span>
+            </div>
+            <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+              <div className={cn("h-full rounded-full transition-all", barColor(agePercent))} style={{ width: `${agePercent}%` }} />
+            </div>
+          </div>
+        )}
+        {health.maxSessionRuns > 0 && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Runs</span>
+              <span className="tabular-nums">{health.sessionRunCount} / {health.maxSessionRuns}</span>
+            </div>
+            <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+              <div className={cn("h-full rounded-full transition-all", barColor(runPercent))} style={{ width: `${runPercent}%` }} />
+            </div>
+          </div>
+        )}
+        {health.maxRawInputTokens > 0 && health.rawInputTokens != null && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Input tokens</span>
+              <span className="tabular-nums">{formatTokens(health.rawInputTokens)} / {formatTokens(health.maxRawInputTokens)}</span>
+            </div>
+            <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+              <div className={cn("h-full rounded-full transition-all", barColor(tokenPercent))} style={{ width: `${tokenPercent}%` }} />
+            </div>
+          </div>
+        )}
+        {health.warningReason && (
+          <p className="text-xs text-muted-foreground mt-1">{health.warningReason}</p>
+        )}
       </div>
     </div>
   );

@@ -1131,6 +1131,20 @@ export function agentRoutes(db: Db) {
     res.json(state);
   });
 
+  router.get("/agents/:id/session-health", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    const health = await heartbeat.getSessionHealth(id);
+    res.json(health);
+  });
+
   router.get("/agents/:id/task-sessions", async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;

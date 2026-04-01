@@ -1080,6 +1080,98 @@ export function heartbeatService(db: Db) {
     };
   }
 
+  async function getSessionHealth(agentId: string) {
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    if (!agent) return null;
+
+    const policy = parseSessionCompactionPolicy(agent);
+    const runtimeState = await getRuntimeState(agentId);
+    const sessionId = runtimeState?.sessionId ?? null;
+
+    if (!sessionId) {
+      return {
+        sessionId: null,
+        sessionAgeHours: 0,
+        sessionRunCount: 0,
+        maxSessionAgeHours: policy.maxSessionAgeHours,
+        maxSessionRuns: policy.maxSessionRuns,
+        maxRawInputTokens: policy.maxRawInputTokens,
+        healthy: true,
+        warningReason: null,
+        policySource: resolveSessionCompactionPolicy(agent.adapterType, agent.runtimeConfig).source,
+      };
+    }
+
+    const fetchLimit = Math.max(policy.maxSessionRuns > 0 ? policy.maxSessionRuns + 1 : 0, 4);
+    const runs = await db
+      .select({
+        id: heartbeatRuns.id,
+        createdAt: heartbeatRuns.createdAt,
+        usageJson: heartbeatRuns.usageJson,
+      })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.sessionIdAfter, sessionId)))
+      .orderBy(desc(heartbeatRuns.createdAt))
+      .limit(fetchLimit);
+
+    const runCount = runs.length;
+    const latestRun = runs[0] ?? null;
+    const oldestRun =
+      policy.maxSessionAgeHours > 0
+        ? await getOldestRunForSession(agentId, sessionId)
+        : runs[runs.length - 1] ?? latestRun;
+
+    const sessionAgeHours =
+      latestRun && oldestRun
+        ? Math.max(
+            0,
+            (Date.now() - new Date(oldestRun.createdAt).getTime()) / (1000 * 60 * 60),
+          )
+        : 0;
+
+    const latestRawUsage = readRawUsageTotals(latestRun?.usageJson);
+    const rawInputTokens = latestRawUsage?.inputTokens ?? 0;
+
+    let warningReason: string | null = null;
+    const ageThresholdPct = policy.maxSessionAgeHours > 0 ? sessionAgeHours / policy.maxSessionAgeHours : 0;
+    const runThresholdPct = policy.maxSessionRuns > 0 ? runCount / policy.maxSessionRuns : 0;
+    const tokenThresholdPct = policy.maxRawInputTokens > 0 ? rawInputTokens / policy.maxRawInputTokens : 0;
+
+    if (ageThresholdPct >= 1) {
+      warningReason = `session age (${Math.floor(sessionAgeHours)}h) exceeds limit (${policy.maxSessionAgeHours}h)`;
+    } else if (runThresholdPct >= 1) {
+      warningReason = `session runs (${runCount}) exceeds limit (${policy.maxSessionRuns})`;
+    } else if (tokenThresholdPct >= 1) {
+      warningReason = `session tokens (${formatCount(rawInputTokens)}) exceeds limit (${formatCount(policy.maxRawInputTokens)})`;
+    } else if (ageThresholdPct >= 0.8) {
+      warningReason = `session age approaching limit (${Math.floor(sessionAgeHours)}h / ${policy.maxSessionAgeHours}h)`;
+    } else if (runThresholdPct >= 0.8) {
+      warningReason = `session runs approaching limit (${runCount} / ${policy.maxSessionRuns})`;
+    }
+
+    const healthy =
+      (policy.maxSessionAgeHours === 0 || ageThresholdPct < 1) &&
+      (policy.maxSessionRuns === 0 || runThresholdPct < 1) &&
+      (policy.maxRawInputTokens === 0 || tokenThresholdPct < 1);
+
+    return {
+      sessionId,
+      sessionAgeHours: Math.round(sessionAgeHours * 100) / 100,
+      sessionRunCount: runCount,
+      rawInputTokens,
+      maxSessionAgeHours: policy.maxSessionAgeHours,
+      maxSessionRuns: policy.maxSessionRuns,
+      maxRawInputTokens: policy.maxRawInputTokens,
+      healthy,
+      warningReason,
+      policySource: resolveSessionCompactionPolicy(agent.adapterType, agent.runtimeConfig).source,
+    };
+  }
+
   async function resolveSessionBeforeForWakeup(
     agent: typeof agents.$inferSelect,
     taskKey: string | null,
@@ -3861,6 +3953,8 @@ export function heartbeatService(db: Db) {
         clearedTaskSessions,
       };
     },
+
+    getSessionHealth,
 
     listEvents: (runId: string, afterSeq = 0, limit = 200) =>
       db
