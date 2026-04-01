@@ -57,7 +57,10 @@ import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.
 import {
   hasSessionCompactionThresholds,
   resolveSessionCompactionPolicy,
+  classifyAdapterError,
+  formatClassification,
   type SessionCompactionPolicy,
+  type ErrorClassification,
 } from "@paperclipai/adapter-utils";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
@@ -2713,6 +2716,18 @@ export function heartbeatService(db: Db) {
         outcome = "failed";
       }
 
+      // Classify error using the taxonomy for richer error codes and retry decisions
+      let errorClassification: ErrorClassification | null = null;
+      if (outcome === "failed" || outcome === "timed_out") {
+        errorClassification = classifyAdapterError(adapterResult, run.processLossRetryCount ?? 0);
+        if (errorClassification) {
+          logger.info(
+            { runId, classification: formatClassification(errorClassification) },
+            "adapter error classified",
+          );
+        }
+      }
+
       let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
       if (handle) {
         logSummary = await runLogStore.finalize(handle);
@@ -2764,11 +2779,11 @@ export function heartbeatService(db: Db) {
               ),
         errorCode:
           outcome === "timed_out"
-            ? "timeout"
+            ? (errorClassification?.code ?? "timeout")
             : outcome === "cancelled"
               ? "cancelled"
               : outcome === "failed"
-                ? (adapterResult.errorCode ?? "adapter_failed")
+                ? (errorClassification?.code ?? adapterResult.errorCode ?? "adapter_failed")
                 : null,
         exitCode: adapterResult.exitCode,
         signal: adapterResult.signal,
@@ -2797,6 +2812,15 @@ export function heartbeatService(db: Db) {
           payload: {
             status,
             exitCode: adapterResult.exitCode,
+            ...(errorClassification ? {
+              errorClassification: {
+                category: errorClassification.category,
+                code: errorClassification.code,
+                retriable: errorClassification.retriable,
+                shouldPauseAgent: errorClassification.shouldPauseAgent,
+                suggestedDelaySec: errorClassification.suggestedDelaySec,
+              },
+            } : {}),
           },
         });
         await releaseIssueExecutionAndPromote(finalizedRun);
@@ -2827,6 +2851,34 @@ export function heartbeatService(db: Db) {
         }
       }
       await finalizeAgentStatus(agent.id, outcome);
+
+      // Fatal errors (auth failures, quota exhaustion, invalid model) should pause
+      // the agent so it stops burning budget on guaranteed-to-fail runs.
+      if (errorClassification?.shouldPauseAgent) {
+        const now = new Date();
+        await db
+          .update(agents)
+          .set({
+            status: "paused",
+            pauseReason: `fatal_error:${errorClassification.code}`,
+            pausedAt: now,
+            updatedAt: now,
+          })
+          .where(and(eq(agents.id, agent.id), inArray(agents.status, ["idle", "running", "error"])));
+        logger.warn(
+          { agentId: agent.id, runId, errorCode: errorClassification.code },
+          "agent paused due to fatal adapter error",
+        );
+        publishLiveEvent({
+          companyId: agent.companyId,
+          type: "agent.status",
+          payload: {
+            agentId: agent.id,
+            status: "paused",
+            pauseReason: `fatal_error:${errorClassification.code}`,
+          },
+        });
+      }
     } catch (err) {
       const message = redactCurrentUserText(
         err instanceof Error ? err.message : "Unknown adapter failure",
@@ -2897,9 +2949,19 @@ export function heartbeatService(db: Db) {
           // The inner catch did not fire, so we must record the failure here.
           const message = outerErr instanceof Error ? outerErr.message : "Unknown setup failure";
           logger.error({ err: outerErr, runId }, "heartbeat execution setup failed");
+
+          // Classify the setup error so run history shows a useful code
+          const setupClassification = classifyAdapterError({
+            exitCode: 1,
+            signal: null,
+            timedOut: false,
+            errorMessage: message,
+          }, 0);
+          const setupErrorCode = setupClassification?.code ?? "adapter_failed";
+
           await setRunStatus(runId, "failed", {
             error: message,
-            errorCode: "adapter_failed",
+            errorCode: setupErrorCode,
             finishedAt: new Date(),
           }).catch(() => undefined);
           await setWakeupStatus(run.wakeupRequestId, "failed", {
@@ -2915,12 +2977,40 @@ export function heartbeatService(db: Db) {
               stream: "system",
               level: "error",
               message,
+              payload: setupClassification ? {
+                errorClassification: {
+                  category: setupClassification.category,
+                  code: setupClassification.code,
+                  retriable: setupClassification.retriable,
+                  shouldPauseAgent: setupClassification.shouldPauseAgent,
+                  suggestedDelaySec: setupClassification.suggestedDelaySec,
+                },
+              } : undefined,
             }).catch(() => undefined);
             await releaseIssueExecutionAndPromote(failedRun).catch(() => undefined);
           }
           // Ensure the agent is not left stuck in "running" if the inner catch handler's
           // DB calls threw (e.g. a transient DB error in finalizeAgentStatus).
           await finalizeAgentStatus(run.agentId, "failed").catch(() => undefined);
+
+          // Pause agent on fatal setup errors (same logic as the inner path)
+          if (setupClassification?.shouldPauseAgent) {
+            const now = new Date();
+            await db
+              .update(agents)
+              .set({
+                status: "paused",
+                pauseReason: `fatal_error:${setupClassification.code}`,
+                pausedAt: now,
+                updatedAt: now,
+              })
+              .where(and(eq(agents.id, run.agentId), inArray(agents.status, ["idle", "running", "error"])))
+              .catch(() => undefined);
+            logger.warn(
+              { agentId: run.agentId, runId, errorCode: setupClassification.code },
+              "agent paused due to fatal setup error",
+            );
+          }
         } finally {
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           activeRunExecutions.delete(run.id);

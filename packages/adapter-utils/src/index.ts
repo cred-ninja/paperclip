@@ -51,3 +51,16 @@ export {
   redactTranscriptEntryPaths,
 } from "./log-redaction.js";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
+export type {
+  ErrorCategory,
+  RetriableErrorCode,
+  FatalErrorCode,
+  ActionableErrorCode,
+  TaxonomyErrorCode,
+  ErrorClassification,
+} from "./error-taxonomy.js";
+export {
+  classifyAdapterError,
+  computeRetryDelay,
+  formatClassification,
+} from "./error-taxonomy.js";
