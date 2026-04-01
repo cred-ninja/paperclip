@@ -289,3 +289,14 @@ export {
   type SetPluginState,
   type ListPluginState,
 } from "./plugin.js";
+
+export {
+  debtItemSchema,
+  factorySourceSchema,
+  factoryTargetSchema,
+  factoryManifestSchema,
+  lowerRequestSchema,
+  executeRequestSchema,
+  type LowerRequest,
+  type ExecuteRequest,
+} from "./compiler.js";

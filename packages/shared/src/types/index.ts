@@ -1,4 +1,13 @@
 export type { Company } from "./company.js";
+export type {
+  DebtItem,
+  FactorySource,
+  FactoryTarget,
+  FactoryManifest,
+  LoweringResult,
+  FactoryCreatedIssue,
+  FactoryExecutionResult,
+} from "./compiler.js";
 export type { InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
 export type {
   CompanySkillSourceType,

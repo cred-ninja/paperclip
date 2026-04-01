@@ -555,6 +555,27 @@ export {
   type ListPluginState,
 } from "./validators/index.js";
 
+export {
+  debtItemSchema,
+  factorySourceSchema,
+  factoryTargetSchema,
+  factoryManifestSchema,
+  lowerRequestSchema,
+  executeRequestSchema,
+  type LowerRequest,
+  type ExecuteRequest,
+} from "./validators/index.js";
+
+export type {
+  DebtItem,
+  FactorySource,
+  FactoryTarget,
+  FactoryManifest,
+  LoweringResult,
+  FactoryCreatedIssue,
+  FactoryExecutionResult,
+} from "./types/index.js";
+
 export { API_PREFIX, API } from "./api.js";
 export { normalizeAgentUrlKey, deriveAgentUrlKey, isUuidLike } from "./agent-url-key.js";
 export { deriveProjectUrlKey, normalizeProjectUrlKey } from "./project-url-key.js";
