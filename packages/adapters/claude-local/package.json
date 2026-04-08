@@ -43,10 +43,11 @@
   },
   "files": [
     "dist",
-    "skills"
+    "skills",
+    "src/server/mcp-bridge.mjs"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/server/mcp-bridge.mjs dist/server/mcp-bridge.mjs",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "probe:quota": "pnpm exec tsx src/cli/quota-probe.ts --json",

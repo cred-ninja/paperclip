@@ -59,6 +59,47 @@ async function buildSkillsDir(config: Record<string, unknown>): Promise<string> 
   return tmp;
 }
 
+/**
+ * Build an MCP config file that exposes Paperclip plugin tools to the Claude
+ * Code process via `--mcp-config`.  The bridge script translates MCP stdio
+ * JSON-RPC into HTTP calls against the Paperclip server's plugin tool endpoints.
+ *
+ * Returns the absolute path to the config JSON, or `null` when the bridge
+ * script is not available (graceful degradation — no plugin tools exposed).
+ */
+async function buildMcpConfig(
+  skillsDir: string,
+  env: Record<string, string>,
+): Promise<string | null> {
+  const bridgePath = path.join(__moduleDir, "mcp-bridge.mjs");
+  try {
+    await fs.access(bridgePath);
+  } catch {
+    return null;
+  }
+
+  const mcpConfig = {
+    mcpServers: {
+      "paperclip-tools": {
+        command: "node",
+        args: [bridgePath],
+        env: {
+          PAPERCLIP_API_URL: env.PAPERCLIP_API_URL || "",
+          PAPERCLIP_API_KEY: env.PAPERCLIP_API_KEY || "",
+          PAPERCLIP_AGENT_ID: env.PAPERCLIP_AGENT_ID || "",
+          PAPERCLIP_COMPANY_ID: env.PAPERCLIP_COMPANY_ID || "",
+          PAPERCLIP_RUN_ID: env.PAPERCLIP_RUN_ID || "",
+          PAPERCLIP_PROJECT_ID: env.PAPERCLIP_PROJECT_ID || "",
+        },
+      },
+    },
+  };
+
+  const configPath = path.join(skillsDir, "mcp-config.json");
+  await fs.writeFile(configPath, JSON.stringify(mcpConfig, null, 2));
+  return configPath;
+}
+
 interface ClaudeExecutionInput {
   runId: string;
   agent: AdapterExecutionContext["agent"];
@@ -229,6 +270,11 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     env.PAPERCLIP_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
 
+  const workspaceProjectId = asString(workspaceContext.projectId, "");
+  if (workspaceProjectId) {
+    env.PAPERCLIP_PROJECT_ID = workspaceProjectId;
+  }
+
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
@@ -353,6 +399,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
   const skillsDir = await buildSkillsDir(config);
+  const mcpConfigPath = await buildMcpConfig(skillsDir, env);
 
   // When instructionsFilePath is configured, create a combined temp file that
   // includes both the file content and the path directive, so we only need
@@ -428,6 +475,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--append-system-prompt-file", effectiveInstructionsFilePath);
     }
     args.push("--add-dir", skillsDir);
+    if (mcpConfigPath) {
+      args.push("--mcp-config", mcpConfigPath);
+    }
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };
